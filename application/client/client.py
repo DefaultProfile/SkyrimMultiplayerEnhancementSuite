@@ -16,10 +16,16 @@ except ImportError:
     import websockets
 
 class Client:
-    def __init__(self):
-        self.server_url = None
+    def __init__(self, server_url):
+        self.server_url = server_url
         self.skyrim_data_dir_name = None
         self.skyrim_data_dir = None
+
+    async def fetch_config(self, websocket):
+        await websocket.send(json.dumps({"action": "fetch_config"}))
+        response = await websocket.recv()
+        config = json.loads(response)
+        self.skyrim_data_dir_name = config['skyrim_data_dir_name']
 
     async def find_skyrim_data_directories(self):
         found_directories = []
@@ -92,8 +98,7 @@ class Client:
 
     async def run(self):
         async with websockets.connect(self.server_url) as websocket:
-            await self.receive_config_file(websocket)
-            
+            await self.fetch_config(websocket)
             found_directories = await self.find_skyrim_data_directories()
             if not found_directories:
                 self.skyrim_data_dir = input("Skyrim Special Edition/Data directory not found. Please specify the path to the Skyrim Data folder: ")
@@ -109,18 +114,7 @@ class Client:
             movement_data = {"player_id": 1, "position": {"x": 100, "y": 200, "z": 300}}
             await self.move_character(websocket, movement_data)
 
-    async def receive_config_file(self, websocket):
-        response = await websocket.recv()
-        data = json.loads(response)
-        if data['action'] == 'config':
-            config_data = data['config_data']
-            with open('config.json', 'w') as config_file:
-                config_file.write(config_data)
-            with open('config.json') as config_file:
-                config = json.load(config_file)
-                self.server_url = config['server_url']
-                self.skyrim_data_dir_name = config['skyrim_data_dir_name']
-
-# Client instance creation and run
-client = Client()
+# Connect to the server and run the client
+server_url = "ws://10.0.0.154:5000"
+client = Client(server_url)
 asyncio.run(client.run())

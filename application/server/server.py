@@ -19,7 +19,7 @@ except ImportError:
 class Client:
     def __init__(self, websocket):
         self.websocket = websocket
-        self.id = id(websocket)  # Unique identifier for the client
+        self.id = id(websocket)
         self.skyrim_data_dir = None
 
     async def send(self, message):
@@ -34,72 +34,66 @@ async def register(websocket):
     client = Client(websocket)
     connected_clients[client.id] = client
     try:
-        # Send config.json to the client
-        await send_config_file(client)
-        await client.websocket.wait_closed()
+        async for message in websocket:
+            await process_message(client, message)
     finally:
         del connected_clients[client.id]
 
-async def handler(websocket, path):
-    await register(websocket)
-    async for message in websocket:
-        data = json.loads(message)
-        action = data.get("action")
-        
-        if action == "verify":
-            await handle_verify(websocket, data)
-        elif action == "sync":
-            await handle_sync(websocket, data)
-        elif action == "move":
-            await handle_move(data)
+async def process_message(client, message):
+    data = json.loads(message)
+    if data['action'] == 'fetch_config':
+        await fetch_config(client)
+    elif data['action'] == 'verify':
+        await verify_files(client, data)
+    elif data['action'] == 'download':
+        await send_file(client, data['file_path'])
+    elif data['action'] == 'move':
+        await update_position(client, data['movement_data'])
 
-async def send_config_file(client):
-    config_path = "config.json"
-    if os.path.exists(config_path):
-        with open(config_path, 'r') as file:
-            config_data = file.read()
-        await client.send(json.dumps({"action": "config", "config_data": config_data}))
-
-async def handle_verify(websocket, data):
-    client = get_client_by_websocket(websocket)
-    checksums = data.get("checksums", {})
-    client.skyrim_data_dir = data.get("skyrim_data_dir")
-    
-    server_checksums = get_server_checksums(client.skyrim_data_dir)
-    discrepancies = {
-        "missing": [file for file in server_checksums if file not in checksums],
-        "mismatch": [file for file in checksums if checksums[file] != server_checksums.get(file)],
-        "unexpected": [file for file in checksums if file not in server_checksums]
+async def fetch_config(client):
+    config = {
+        "skyrim_data_dir_name": "SteamLibrary/steamapps/common/Skyrim Special Edition/Data"
     }
-    
+    await client.send(json.dumps(config))
+
+async def verify_files(client, data):
+    client.skyrim_data_dir = data['skyrim_data_dir']
+    local_checksums = await get_local_file_checksums(client.skyrim_data_dir)
+    discrepancies = compare_checksums(local_checksums, data['checksums'])
     await client.send(json.dumps(discrepancies))
 
-async def handle_sync(websocket, data):
-    client = get_client_by_websocket(websocket)
-    # Sync logic here
+async def send_file(client, file_path):
+    file_full_path = os.path.join(client.skyrim_data_dir, file_path)
+    with open(file_full_path, 'rb') as f:
+        file_data = f.read()
+    await client.send(json.dumps({"action": "file_data", "file_path": file_path, "file_data": file_data.decode('latin1')}))
 
-async def handle_move(data):
-    for client in connected_clients.values():
-        await client.send(json.dumps(data))
+async def update_position(client, movement_data):
+    for other_client in connected_clients.values():
+        if other_client.id != client.id:
+            await other_client.send(json.dumps({"action": "move", "movement_data": movement_data}))
 
-def get_server_checksums(skyrim_data_dir):
-    checksums = {}
+async def get_local_file_checksums(skyrim_data_dir):
+    local_checksums = {}
     for root, _, files in os.walk(skyrim_data_dir):
         for file in files:
             file_path = os.path.join(root, file)
             with open(file_path, 'rb') as f:
-                checksums[file] = hashlib.md5(f.read()).hexdigest()
-    return checksums
+                local_checksums[file] = hashlib.md5(f.read()).hexdigest()
+    return local_checksums
 
-def get_client_by_websocket(websocket):
-    for client in connected_clients.values():
-        if client.websocket == websocket:
-            return client
-    return None
+def compare_checksums(local_checksums, client_checksums):
+    discrepancies = {"missing": [], "mismatch": [], "unexpected": []}
+    for file, checksum in client_checksums.items():
+        if file not in local_checksums:
+            discrepancies['missing'].append(file)
+        elif local_checksums[file] != checksum:
+            discrepancies['mismatch'].append(file)
+    for file in local_checksums:
+        if file not in client_checksums:
+            discrepancies['unexpected'].append(file)
+    return discrepancies
 
-async def main():
-    async with websockets.serve(handler, "0.0.0.0", 5000):
-        await asyncio.Future()  # run forever
-
-if __name__ == "__main__":
-    asyncio.run(main())
+start_server = websockets.serve(register, "0.0.0.0", 5000)
+asyncio.get_event_loop().run_until_complete(start_server)
+asyncio.get_event_loop().run_forever()
