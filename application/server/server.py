@@ -1,7 +1,10 @@
 import asyncio
 import websockets
-from modules.network import register
+from modules.network import handle_client
 
-start_server = websockets.serve(register, "0.0.0.0", 5000)
-asyncio.get_event_loop().run_until_complete(start_server)
-asyncio.get_event_loop().run_forever()
+async def main():
+    async with websockets.serve(handle_client, "0.0.0.0", 5000):
+        await asyncio.Future()  # run forever
+
+if __name__ == "__main__":
+    asyncio.run(main())
