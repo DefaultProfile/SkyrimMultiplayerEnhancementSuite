@@ -1,10 +1,13 @@
-import json
-from .sync import send_file_list, send_file
+import websockets
 
-async def handle_client(websocket, path):
-    async for message in websocket:
-        data = json.loads(message)
-        if data["action"] == "request_file_list":
-            await send_file_list(websocket)
-        elif data["action"] == "request_file":
-            await send_file(websocket, data["file"])
+async def connect_to_server(server_url):
+    return await websockets.connect(server_url)
+
+async def send_message(websocket, message):
+    await websocket.send(message)
+
+async def receive_message(websocket):
+    return await websocket.recv()
+
+async def start_server(handler, host, port):
+    return await websockets.serve(handler, host, port)
